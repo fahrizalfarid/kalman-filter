@@ -4,6 +4,11 @@
 package kalmanfilter
 
 import (
+	"encoding/csv"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
 	"testing"
 )
 
@@ -85,13 +90,13 @@ func TestSingleStateKalmanFilter(t *testing.T) {
 		22.25240413515481, 22.329609403048057, 22.27237372405491, 22.366664610995013, 22.39274547558745,
 		22.395901805786263}
 
-	A := 1
-	B := 0
-	C := 1
-	Q := 0.005
-	R := 1
-	x := 18
-	P := 1
+	A := 1     // no process innovation
+	B := 0     // no control input
+	C := 1     // measurement
+	Q := 0.005 // process covariance
+	R := 1     // measurement covariance
+	x := 18    // initial estimate
+	P := 1     // initial covariance
 
 	kalmanFilter := NewSingleStateKalmanFilter[float64](
 		float64(A), float64(B),
@@ -107,6 +112,86 @@ func TestSingleStateKalmanFilter(t *testing.T) {
 			t.Error("wrong value", currentState, dataExpected[i])
 			t.FailNow()
 		}
+	}
+}
+
+func TestSingleStateGpsKalmanFilter(t *testing.T) {
+	type location struct {
+		lat, lon float64
+	}
+
+	data := make(chan *location, 500)
+
+	f, err := os.Open("gps.txt")
+
+	if err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
+	defer f.Close()
+
+	c := csv.NewReader(f)
+	header := true
+
+	go func() {
+		defer close(data)
+
+		for {
+			row, err := c.Read()
+			if err != nil && err != io.EOF {
+				t.Error(err)
+				t.FailNow()
+			}
+			if err == io.EOF {
+				t.Log("EOF")
+				break
+			}
+
+			if header == true {
+				header = false
+			} else {
+				lat, long := row[0], row[1]
+				latF, _ := strconv.ParseFloat(lat, 64)
+				longF, _ := strconv.ParseFloat(long, 64)
+				data <- &location{
+					lat: latF,
+					lon: longF,
+				}
+			}
+
+		}
+	}()
+
+	A := 1             // no process innovation
+	B := 0             // no control input
+	C := 1             // measurement
+	Q := 0.000001      // process covariance
+	R := 1             // measurement covariance
+	xLat := -7.355475  // initial estimate
+	xLon := 112.774277 // initial estimate
+	P := 1             // initial covariance
+
+	latKalmanFilter := NewSingleStateKalmanFilter[float64](
+		float64(A), float64(B),
+		float64(C), float64(xLat),
+		float64(P), Q, float64(R),
+	)
+
+	lonKalmanFilter := NewSingleStateKalmanFilter[float64](
+		float64(A), float64(B),
+		float64(C), float64(xLon),
+		float64(P), Q, float64(R),
+	)
+
+	for v := range data {
+		latKalmanFilter.Step(0, v.lat)
+		latCurrentState := latKalmanFilter.CurrentState()
+
+		lonKalmanFilter.Step(0, v.lon)
+		lonCurrentState := lonKalmanFilter.CurrentState()
+
+		fmt.Printf("lat,lon : %v, %v\n", v.lat, v.lon)
+		fmt.Printf("latF,lonF : %v, %v\n\n", latCurrentState, lonCurrentState)
 	}
 }
 ```
